@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.my_first_app"
+    namespace = "com.parasariz.sms_free"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
