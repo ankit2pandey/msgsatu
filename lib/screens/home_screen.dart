@@ -448,18 +448,30 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: Text(
-                              job['recipients']?.toString() ?? 'Unknown Recipient',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
+                            child: Builder(builder: (_) {
+                              final rawRecipients = job['recipients'];
+                              final recipientsText = rawRecipients is List
+                                  ? rawRecipients.map((e) => e.toString()).join(', ')
+                                  : (rawRecipients?.toString() ?? 'Unknown Recipient');
+                              return Text(
+                                recipientsText,
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              );
+                            }),
                           ),
-                          Text(
-                            'Job #${job['jobId']?.toString() ?? '?'}',
-                            style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
+                          Flexible(
+                            child: Text(
+                              'Job #${job['jobId']?.toString() ?? '?'}',
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                              style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
+                            ),
                           ),
                         ],
                       ),
