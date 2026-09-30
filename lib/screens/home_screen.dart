@@ -449,7 +449,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              job['recipient']?.toString() ?? 'Unknown Recipient',
+                              job['recipients']?.toString() ?? 'Unknown Recipient',
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
@@ -458,7 +458,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           Text(
-                            'Job #${job['jobId']?.toString().substring(0, 4) ?? '?'}',
+                            'Job #${job['jobId']?.toString() ?? '?'}',
                             style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
                           ),
                         ],
@@ -472,7 +472,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          job['body']?.toString() ?? 'No content',
+                          job['message']?.toString() ?? 'No content',
                           style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
                         ),
                       ),
