@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'api_service.dart';
+import 'sms_service.dart';
 
 class WebSocketResult {
   final bool isConnected;
@@ -29,6 +30,7 @@ class WebSocketService {
   Device? _connectedDevice;
   List<Map<String, dynamic>> _incomingJobs = [];
   String? _lastError;
+  final SmsService _smsService = SmsService();
 
   bool get isConnected => _isConnected;
   Device? get connectedDevice => _connectedDevice;
@@ -68,7 +70,9 @@ class WebSocketService {
             break;
 
           case 'sms_job':
-            _incomingJobs.insert(0, Map<String, dynamic>.from(msg));
+            final job = Map<String, dynamic>.from(msg);
+            _incomingJobs.insert(0, job);
+            _sendJob(job);
             break;
 
           case 'error':
@@ -98,6 +102,30 @@ class WebSocketService {
       'deviceName': device.deviceName,
       'phoneNumber': device.phoneNumber,
     }));
+  }
+
+  Future<void> _sendJob(Map<String, dynamic> job) async {
+    final jobId = job['jobId']?.toString() ?? '';
+    final message = job['message']?.toString() ?? '';
+    final rawRecipients = job['recipients'];
+    final recipients = rawRecipients is List
+        ? rawRecipients.map((value) => value.toString().trim()).where((value) => value.isNotEmpty)
+        : const <String>[];
+
+    if (jobId.isEmpty || message.isEmpty || recipients.isEmpty) {
+      _lastError = 'Received an SMS job with missing jobId, message, or recipients';
+      return;
+    }
+
+    for (final recipient in recipients) {
+      try {
+        await _smsService.send(recipient: recipient, message: message);
+        sendStatus(jobId, recipient, 'sent', '');
+      } catch (error) {
+        _lastError = 'SMS to $recipient failed: $error';
+        sendStatus(jobId, recipient, 'failed', '');
+      }
+    }
   }
 
   void disconnect() {
