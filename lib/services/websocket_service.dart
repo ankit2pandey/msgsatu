@@ -30,6 +30,7 @@ class WebSocketService {
   Device? _connectedDevice;
   List<Map<String, dynamic>> _incomingJobs = [];
   String? _lastError;
+  bool _manualDisconnect = false;
   final SmsService _smsService = SmsService();
 
   bool get isConnected => _isConnected;
@@ -44,6 +45,7 @@ class WebSocketService {
     }
 
     disconnect();
+    _manualDisconnect = false;
 
     final wsUrl = 'wss://sms-back-acto.onrender.com/ws';
     _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
@@ -87,7 +89,7 @@ class WebSocketService {
       _pingTimer = null;
       _isConnected = false;
 
-      if (_connectedDevice != null || device.id.isNotEmpty) {
+      if (!_manualDisconnect) {
         _reconnectTimer?.cancel();
         _reconnectTimer = Timer(const Duration(seconds: 3), () {
           connect(device);
@@ -129,6 +131,7 @@ class WebSocketService {
   }
 
   void disconnect() {
+    _manualDisconnect = true;
     _pingTimer?.cancel();
     _reconnectTimer?.cancel();
     _pingTimer = null;
