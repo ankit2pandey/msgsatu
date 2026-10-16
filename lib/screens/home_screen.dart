@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 import '../services/api_service.dart';
+import '../services/background_sms_service.dart';
 import '../services/websocket_service.dart';
 import 'login_screen.dart';
 
@@ -16,14 +18,28 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   List<Device> _devices = [];
   String? _error;
-  
-  final WebSocketService _wsService = WebSocketService();
+
+  final BackgroundSmsService _backgroundService = BackgroundSmsService.instance;
+  final WebSocketService _iosWsService = WebSocketService();
   Timer? _statusTimer;
+
+  bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
+  bool get _isConnected => _isAndroid
+      ? _backgroundService.state.value['connected'] == true
+      : _iosWsService.isConnected;
+  List<Map<String, dynamic>> get _jobs {
+    if (!_isAndroid) return _iosWsService.incomingJobs;
+    final jobs = _backgroundService.state.value['jobs'];
+    return jobs is List
+        ? jobs.map((job) => Map<String, dynamic>.from(job as Map)).toList()
+        : <Map<String, dynamic>>[];
+  }
 
   @override
   void initState() {
     super.initState();
     _fetchDevices();
+    if (_isAndroid) _backgroundService.requestState();
     _statusTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -32,7 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _statusTimer?.cancel();
-    _wsService.disconnect();
+    if (!_isAndroid) _iosWsService.disconnect();
     super.dispose();
   }
 
@@ -64,32 +80,73 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _logout() async {
+    if (_isAndroid) {
+      await _backgroundService.stop();
+    } else {
+      _iosWsService.disconnect();
+    }
     await logout();
-    _wsService.disconnect();
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-    );
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const LoginScreen()));
   }
 
   Future<void> _connectToDevice(Device device) async {
     try {
+      if (_isAndroid) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Start SMS service?'),
+            content: const Text(
+              'While this service is running, it receives SMS jobs for your '
+              'Tachneat account and sends texts from this phone to the '
+              'recipients in each job. It keeps running after you leave the '
+              'dashboard. Use Stop Service on the dashboard to stop it.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Start service'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+        if (!mounted) return;
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Connecting to ${device.deviceName}...', style: const TextStyle(color: Colors.white)),
+          content: Text(
+            'Connecting to ${device.deviceName}...',
+            style: const TextStyle(color: Colors.white),
+          ),
           backgroundColor: const Color(0xFF6366F1), // Indigo 500
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           margin: const EdgeInsets.all(16),
         ),
       );
-      await _wsService.connect(device);
+      if (_isAndroid) {
+        await _backgroundService.start(device);
+      } else {
+        await _iosWsService.connect(device);
+      }
       setState(() {});
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to connect: $e', style: const TextStyle(color: Colors.white)),
+          content: Text(
+            'Failed to connect: $e',
+            style: const TextStyle(color: Colors.white),
+          ),
           backgroundColor: Colors.redAccent.shade700,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -103,7 +160,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Dashboard', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 18)),
+        title: const Text(
+          'Dashboard',
+          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 18),
+        ),
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
@@ -123,40 +183,41 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildConnectionStatusBanner(),
           Expanded(
             child: _isLoading
-                ? const Center(
-                    child: CircularProgressIndicator(),
-                  )
+                ? const Center(child: CircularProgressIndicator())
                 : _error != null
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(_error!, style: const TextStyle(color: Colors.redAccent)),
-                            const SizedBox(height: 16),
-                            ElevatedButton(
-                              onPressed: _fetchDevices,
-                              child: const Text('Retry'),
-                            ),
-                          ],
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          _error!,
+                          style: const TextStyle(color: Colors.redAccent),
                         ),
-                      )
-                    : _wsService.isConnected 
-                        ? _buildJobsList() 
-                        : _devices.isEmpty
-                            ? const Center(
-                                child: Text(
-                                  'No devices found.',
-                                  style: TextStyle(color: Color(0xFF94A3B8)),
-                                ),
-                              )
-                            : ListView.builder(
-                                padding: const EdgeInsets.all(16),
-                                itemCount: _devices.length,
-                                itemBuilder: (context, index) {
-                                  final device = _devices[index];
-                                  return _buildDeviceCard(device);
-                                },
-                              ),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          onPressed: _fetchDevices,
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  )
+                : _isConnected
+                ? _buildJobsList()
+                : _devices.isEmpty
+                ? const Center(
+                    child: Text(
+                      'No devices found.',
+                      style: TextStyle(color: Color(0xFF94A3B8)),
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _devices.length,
+                    itemBuilder: (context, index) {
+                      final device = _devices[index];
+                      return _buildDeviceCard(device);
+                    },
+                  ),
           ),
         ],
       ),
@@ -164,10 +225,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildConnectionStatusBanner() {
-    final isConnected = _wsService.isConnected;
-    final connectedDevice = _wsService.connectedDevice;
-    
-    if (!isConnected && connectedDevice == null) {
+    final serviceState = _backgroundService.state.value;
+    final isConnected = _isConnected;
+    final connectedDevice = _isAndroid
+        ? (serviceState['device'] is Map
+              ? Device.fromJson(
+                  Map<String, dynamic>.from(serviceState['device'] as Map),
+                )
+              : null)
+        : _iosWsService.connectedDevice;
+    final running = _isAndroid
+        ? serviceState['running'] == true
+        : _iosWsService.connectedDevice != null;
+
+    if (!running && connectedDevice == null) {
       return Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         padding: const EdgeInsets.all(16),
@@ -182,14 +253,19 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(width: 16),
             const Text(
               'No device currently connected',
-              style: TextStyle(color: Color(0xFFCBD5E1), fontWeight: FontWeight.w500),
+              style: TextStyle(
+                color: Color(0xFFCBD5E1),
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ],
         ),
       );
     }
 
-    final accentColor = isConnected ? const Color(0xFF10B981) : const Color(0xFF6366F1); // Emerald or Indigo
+    final accentColor = isConnected
+        ? const Color(0xFF10B981)
+        : const Color(0xFF6366F1); // Emerald or Indigo
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -230,25 +306,34 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-          if (isConnected)
+          if (running)
             TextButton(
               onPressed: () {
-                _wsService.disconnect();
+                if (_isAndroid) {
+                  _backgroundService.stop();
+                } else {
+                  _iosWsService.disconnect();
+                }
                 setState(() {});
               },
               style: TextButton.styleFrom(
                 foregroundColor: Colors.redAccent,
                 padding: const EdgeInsets.symmetric(horizontal: 12),
               ),
-              child: const Text('Disconnect'),
-            )
+              child: Text(_isAndroid ? 'Stop Service' : 'Disconnect'),
+            ),
         ],
       ),
     );
   }
 
   Widget _buildDeviceCard(Device device) {
-    final isCurrentlyConnected = _wsService.connectedDevice?.id == device.id;
+    final connectedDeviceData = _backgroundService.state.value['device'];
+    final isCurrentlyConnected = _isAndroid
+        ? connectedDeviceData is Map &&
+              connectedDeviceData['id']?.toString() == device.id &&
+              _isConnected
+        : _iosWsService.connectedDevice?.id == device.id;
     final isOnline = device.status == 'online';
 
     return Container(
@@ -271,7 +356,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     color: const Color(0xFF0F172A), // Slate 900
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(Icons.smartphone, color: Color(0xFF94A3B8), size: 24),
+                  child: const Icon(
+                    Icons.smartphone,
+                    color: Color(0xFF94A3B8),
+                    size: 24,
+                  ),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -279,24 +368,40 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        device.deviceName.isNotEmpty ? device.deviceName : 'Unknown Device',
-                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 17, color: Colors.white),
+                        device.deviceName.isNotEmpty
+                            ? device.deviceName
+                            : 'Unknown Device',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 17,
+                          color: Colors.white,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         device.phoneNumber,
-                        style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+                        style: const TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 13,
+                        ),
                       ),
                     ],
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
-                    color: isOnline ? const Color(0xFF10B981).withOpacity(0.1) : const Color(0xFF64748B).withOpacity(0.1),
+                    color: isOnline
+                        ? const Color(0xFF10B981).withOpacity(0.1)
+                        : const Color(0xFF64748B).withOpacity(0.1),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: isOnline ? const Color(0xFF10B981).withOpacity(0.2) : const Color(0xFF64748B).withOpacity(0.2),
+                      color: isOnline
+                          ? const Color(0xFF10B981).withOpacity(0.2)
+                          : const Color(0xFF64748B).withOpacity(0.2),
                     ),
                   ),
                   child: Text(
@@ -305,7 +410,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 0.5,
-                      color: isOnline ? const Color(0xFF10B981) : const Color(0xFF94A3B8),
+                      color: isOnline
+                          ? const Color(0xFF10B981)
+                          : const Color(0xFF94A3B8),
                     ),
                   ),
                 ),
@@ -318,11 +425,22 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Last seen', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                      const Text(
+                        'Last seen',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
                       const SizedBox(height: 2),
                       Text(
-                        device.lastSeen.isNotEmpty ? _formatDate(device.lastSeen) : 'N/A',
-                        style: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                        device.lastSeen.isNotEmpty
+                            ? _formatDate(device.lastSeen)
+                            : 'N/A',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF94A3B8),
+                        ),
                       ),
                     ],
                   ),
@@ -333,10 +451,15 @@ class _HomeScreenState extends State<HomeScreen> {
                         icon: const Icon(Icons.check, size: 16),
                         label: const Text('Connected'),
                         style: ElevatedButton.styleFrom(
-                          disabledBackgroundColor: const Color(0xFF6366F1).withOpacity(0.1),
+                          disabledBackgroundColor: const Color(
+                            0xFF6366F1,
+                          ).withOpacity(0.1),
                           disabledForegroundColor: const Color(0xFF6366F1),
                           elevation: 0,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 0,
+                          ),
                           minimumSize: const Size(0, 36),
                         ),
                       )
@@ -346,10 +469,16 @@ class _HomeScreenState extends State<HomeScreen> {
                           backgroundColor: const Color(0xFF334155), // Slate 700
                           foregroundColor: Colors.white,
                           elevation: 0,
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 0),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 0,
+                          ),
                           minimumSize: const Size(0, 36),
                         ),
-                        child: const Text('Connect', style: TextStyle(fontWeight: FontWeight.w500)),
+                        child: const Text(
+                          'Connect',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
                       ),
               ],
             ),
@@ -360,14 +489,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildJobsList() {
-    final jobs = _wsService.incomingJobs;
+    final jobs = _jobs;
 
     if (jobs.isEmpty) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.inbox_outlined, size: 64, color: Color(0xFF334155)), // Slate 700
+            Icon(
+              Icons.inbox_outlined,
+              size: 64,
+              color: Color(0xFF334155),
+            ), // Slate 700
             SizedBox(height: 16),
             Text(
               'No SMS jobs received yet',
@@ -400,11 +533,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF6366F1).withOpacity(0.1),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFF6366F1).withOpacity(0.2)),
+                  border: Border.all(
+                    color: const Color(0xFF6366F1).withOpacity(0.2),
+                  ),
                 ),
                 child: Text(
                   '${jobs.length} Total',
@@ -429,7 +567,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 decoration: BoxDecoration(
                   color: const Color(0xFF1E293B), // Slate 800
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF334155)), // Slate 700
+                  border: Border.all(
+                    color: const Color(0xFF334155),
+                  ), // Slate 700
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
@@ -444,33 +584,45 @@ class _HomeScreenState extends State<HomeScreen> {
                               color: const Color(0xFF0F172A),
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: const Icon(Icons.message_outlined, color: Color(0xFF38BDF8), size: 18), // Light Blue
+                            child: const Icon(
+                              Icons.message_outlined,
+                              color: Color(0xFF38BDF8),
+                              size: 18,
+                            ), // Light Blue
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: Builder(builder: (_) {
-                              final rawRecipients = job['recipients'];
-                              final recipientsText = rawRecipients is List
-                                  ? rawRecipients.map((e) => e.toString()).join(', ')
-                                  : (rawRecipients?.toString() ?? 'Unknown Recipient');
-                              return Text(
-                                recipientsText,
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              );
-                            }),
+                            child: Builder(
+                              builder: (_) {
+                                final rawRecipients = job['recipients'];
+                                final recipientsText = rawRecipients is List
+                                    ? rawRecipients
+                                          .map((e) => e.toString())
+                                          .join(', ')
+                                    : (rawRecipients?.toString() ??
+                                          'Unknown Recipient');
+                                return Text(
+                                  recipientsText,
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                );
+                              },
+                            ),
                           ),
                           Flexible(
                             child: Text(
                               'Job #${job['jobId']?.toString() ?? '?'}',
                               overflow: TextOverflow.ellipsis,
                               maxLines: 1,
-                              style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
+                              style: const TextStyle(
+                                color: Color(0xFF64748B),
+                                fontSize: 12,
+                              ),
                             ),
                           ),
                         ],
@@ -485,7 +637,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         child: Text(
                           job['message']?.toString() ?? 'No content',
-                          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
+                          style: const TextStyle(
+                            color: Color(0xFF94A3B8),
+                            fontSize: 14,
+                          ),
                         ),
                       ),
                     ],

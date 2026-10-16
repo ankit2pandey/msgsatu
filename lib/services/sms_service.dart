@@ -8,12 +8,18 @@ class SmsService {
   Future<bool> ensurePermission() async {
     if (_hasPermission == true) return true;
 
-    final permission = await Permission.sms.request();
+    var permission = await Permission.sms.status;
+    if (!permission.isGranted) {
+      permission = await Permission.sms.request();
+    }
     _hasPermission = permission.isGranted;
     return permission.isGranted;
   }
 
-  Future<void> send({required String recipient, required String message}) async {
+  Future<void> send({
+    required String recipient,
+    required String message,
+  }) async {
     if (!await ensurePermission()) {
       throw StateError('SMS permission was denied');
     }

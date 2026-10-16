@@ -38,11 +38,13 @@ class AuthResult {
     final token = (json['token'] ?? data['token'] ?? nestedUser['token'] ?? '')
         .toString();
 
-    final email = (json['email'] ?? nestedUser['email'] ?? topUser['email'] ?? '')
-        .toString();
+    final email =
+        (json['email'] ?? nestedUser['email'] ?? topUser['email'] ?? '')
+            .toString();
 
-    final userId = (json['id'] ?? data['id'] ?? nestedUser['id'] ?? topUser['id'] ?? '')
-        .toString();
+    final userId =
+        (json['id'] ?? data['id'] ?? nestedUser['id'] ?? topUser['id'] ?? '')
+            .toString();
 
     return AuthResult(
       success: json['success'] == true,
@@ -55,13 +57,13 @@ class AuthResult {
   }
 
   Map<String, dynamic> toJson() => {
-        'success': success,
-        'message': message,
-        'token': token,
-        'email': email,
-        'id': userId,
-        'data': data,
-      };
+    'success': success,
+    'message': message,
+    'token': token,
+    'email': email,
+    'id': userId,
+    'data': data,
+  };
 
   static Future<void> save(AuthResult result) async {
     try {
@@ -133,6 +135,18 @@ class Device {
       updatedAt: json['updatedAt']?.toString() ?? '',
     );
   }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'userId': userId,
+    'deviceName': deviceName,
+    'androidDeviceId': androidDeviceId,
+    'phoneNumber': phoneNumber,
+    'status': status,
+    'lastSeen': lastSeen,
+    'createdAt': createdAt,
+    'updatedAt': updatedAt,
+  };
 }
 
 class DeviceListResult {
@@ -140,12 +154,18 @@ class DeviceListResult {
   final String message;
   final List<Device> devices;
 
-  DeviceListResult({required this.success, required this.message, required this.devices});
+  DeviceListResult({
+    required this.success,
+    required this.message,
+    required this.devices,
+  });
 
   factory DeviceListResult.fromJson(Map<String, dynamic> json) {
     final rawData = json['data'];
     final list = rawData is List
-        ? rawData.map((item) => Device.fromJson(Map<String, dynamic>.from(item))).toList()
+        ? rawData
+              .map((item) => Device.fromJson(Map<String, dynamic>.from(item)))
+              .toList()
         : <Device>[];
 
     return DeviceListResult(
@@ -165,9 +185,7 @@ Future<http.Response> request(
   final actualClient = client ?? http.Client();
   final url = Uri.parse('$BASE$path');
 
-  final headers = <String, String>{
-    'Content-Type': 'application/json',
-  };
+  final headers = <String, String>{'Content-Type': 'application/json'};
 
   final token = await AuthResult.getToken();
   if (token != null && token.isNotEmpty) {
