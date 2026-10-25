@@ -25,5 +25,6 @@ class SmsService {
     }
 
     await _telephony.sendSMS(phone: recipient, message: message);
+    print('SMS sent to $recipient: $message');
   }
 }
